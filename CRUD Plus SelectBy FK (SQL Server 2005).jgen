@@ -1,0 +1,708 @@
+﻿##|TYPE Template
+##|UNIQUEID 569c8003-57ba-4bb5-a9dd-b6ca712b36e5
+##|TITLE Basic CRUD Plus SelectBy FK
+##|NAMESPACE ZacksFiasco.DataAccessLayer.SQLServer2005
+##|SOURCE_TYPE Source
+##|OUTPUT_LANGUAGE Transact-SQL
+##|GUI_ENGINE Microsoft Script
+##|GUI_LANGUAGE JScript
+##|GUI_BEGIN
+function setup()
+{
+	if ( !input.Contains("lstTables") || !input.Contains("txtPath") )
+	{
+		ui.Title = "SQL Stored Procedures - Insert/Update/Delete";
+		ui.Width = 400;
+		ui.Height = 650;
+
+		// Grab default output path
+		var sOutputPath = "";
+		if (input.Contains("defaultOutputPath")) 
+		{
+			sOutputPath = input.Item("defaultOutputPath");
+		}
+
+		// Display and errors here
+		var lblError = ui.AddLabel("lblError", "", "");
+		lblError.ForeColor = "Red";
+
+		// Setup Folder selection input control.
+		var lblPath = ui.AddLabel("lblPath", "Select the output path:", "Select the output path in the field below.");
+		var outpath = ui.AddTextBox("txtPath", sOutputPath, "Select the Output Path.");
+		var btnSelectPath = ui.AddFilePicker("btnPath", "Select Path", "Select the Output Path.", "txtPath", true);
+
+		ui.AddLabel("lblSchema", "Schema to put procs in:", "Enter the schema to put the procs in.");
+		ui.AddTextBox("txtSchema", "api", "Schema to put procs in:");
+
+		// Setup Database selection combobox.
+		var label_d = ui.AddLabel("lblDatabases", "Select a database:", "Select a database in the dropdown below.");
+		var cmbDatabases = ui.AddComboBox("cmbDatabase", "Select a database.");
+
+		// Setup Tables selection multi-select listbox.
+		var label_t = ui.AddLabel("lblTables", "Select tables:", "Select tables from the listbox below.");
+		var lstTables = ui.AddListBox("lstTables", "Select tables.");
+		lstTables.Height = 320;
+
+		// Attach the onchange event to the cmbDatabases control.
+		setupDatabaseDropdown(cmbDatabases, lblError);
+		cmbDatabases.AttachEvent("onchange", "cmbDatabases_onchange");
+
+		
+		ui.ShowGUI = true;
+	}
+	else 
+	{
+		ui.ShowGUI = false;
+	}
+}
+
+function setupDatabaseDropdown(cmbDatabases, lblError)
+{
+	try 
+	{	
+		if (MyMeta.IsConnected) 
+		{
+			cmbDatabases.BindData(MyMeta.Databases);
+			if (MyMeta.DefaultDatabase != null) 
+			{
+				cmbDatabases.SelectedValue = MyMeta.DefaultDatabase.Name;
+				bindTables(cmbDatabases.SelectedValue);
+			}
+
+			lblError.Text = "";
+		}
+		else
+		{
+			lblError.Text = "Please set up your database connection in the Default Settings dialog.";
+		}
+	}
+	catch (error) 
+	{
+		lblError.Text = "" + error + ", " + error.number + ", " + error.description;
+	}
+}
+
+function bindTables(sDatabase)
+{
+	var lblError = ui.item("lblError");
+	var count = 0
+
+	var lstTables = ui.item("lstTables");
+	
+	try 
+	{	
+		var db = MyMeta.Databases.Item(sDatabase);
+		lstTables.BindData(db.Tables);
+
+		lblError.Text = "";
+	}
+	catch (error) 
+	{
+		lblError.Text = "" + error + ", " + error.number + ", " + error.description;
+	}
+}
+
+function cmbDatabases_onchange(control)
+{
+	var lblError = ui.item("lblError");
+	var count = 0
+
+	var cmbDatabases = ui.item("cmbDatabase");
+
+	bindTables(cmbDatabases.SelectedText);
+}
+##|GUI_END
+##|BODY_MODE Markup
+##|BODY_ENGINE Microsoft Script
+##|BODY_LANGUAGE JScript
+##|BODY_TAG_START <%
+##|BODY_TAG_END %>
+##|BODY_BEGIN
+<%
+// Zack Moore
+// 26 Oct 2007
+// http://zacksfiasco.blogspot.com/
+//
+// Published under the Microsoft Public License. See source code download for a copy of the license. 
+// Copyright 2007 Zack Moore
+//
+//------------------------------------------------------------------------------
+//
+// This template generates Insert, Update, Delete,
+// Select, SelectAll, and SelectBy<ForeignKey> stored procedures based on your sckema.
+//
+// The naming convention is as follows:
+// 1) [TableName]Update
+// 2) [TableName]Insert
+// 3) [TableName]Delete
+// 4) [TableName]Select
+// 5) [TableName]SelectAll
+// 6) [TableName]SelectBy<ForeignKey>
+//
+// This script is based on SQL_StoredProcs.jgen Update : 2/21/2004 by Justin Greenwood
+
+// collect needed data/objects and put them in local variables
+var databaseName = input.Item("cmbDatabase"); 
+var tablenames = input.Item("lstTables"); 
+var database = MyMeta.Databases.Item(databaseName);
+var mySchema = input.Item("txtSchema");
+
+// Filename info
+var filepath = input.item("txtPath");
+if (filepath.charAt(filepath.length - 1) != '\\') filepath += "\\";
+
+// The buffer that will hold all the output for rendering.
+var buffer = "";
+
+var fkProcList = new Array();
+
+for (var i = 0; i < tablenames.Count; i++)
+{
+	//var tablename = tablenames.item(i);
+	//var tableMeta = database.Tables.Item(tablename);
+	
+	var tableMeta = database.Tables.Item(tablenames.item(i));
+	var tablename = tableMeta.Name;
+	var tablenameFull = ("[" + tableMeta.Schema + "].[" + tableMeta.Name + "]");
+	
+	// Build the filename
+	var filename = filepath + "sql_procs_" + tablename + ".sql"
+
+	var insertProcName = tablename + "Insert";
+	var insertParams = "";
+	var insertFields = "";
+	var insertValues = "";
+	var insertAutoKeyCode = "";
+	var insertComputedCode = "";
+
+	var updateProcName = tablename + "Update";
+	var updateParams = "";
+	var updateSet = "";
+	var updateWhere = "";
+
+	var deleteProcName = tablename + "Delete";
+	var deleteParams = "";
+	var deleteWhere = "";
+	
+	var selectProcName = tablename + "Select";
+	var selectParams = "";
+	var selectFields = "";
+	var selectWhere = "";
+
+	var paramName = "";
+
+	var hasComputedFields = false;
+	var hasTimestamp = false;
+	var timestampColumn = "";
+	var timestampParam = "";
+	
+	var updatedOn = false;
+	
+	var debugging = "";
+
+	// Loop through all the columns of the table 
+	for (var j = 0; j < tableMeta.Columns.Count; j++) 
+	{
+		column = tableMeta.Columns.Item(j);
+		paramName = column.Name.split(' ').join('')
+		debugging += ("--" + column.Name + ": " + column.DataTypeName+"\r\n");//zack
+
+		if(selectFields != "")
+		{
+			selectFields += ",\r\n";
+		}
+		
+		selectFields += ("\t\t["+column.Name+"]");
+		
+		// If the datatype is not a timestamp, add it to the insert statement
+		if (column.DataTypeName == "timestamp")
+		{
+			debugging += ("--hasTimestamp==true\r\n");
+			hasTimestamp = true;
+			timestampColumn = column.Name;
+			timestampParam = paramName;
+			
+			if(insertParams != "")
+			{
+				insertParams += ",\r\n";
+			}
+
+			insertParams += ("\t@" + paramName + " " + column.DataTypeNameComplete + " OUTPUT");
+						
+			//if (insertFields != "")
+			//{
+			//	insertFields += ",\r\n";
+			//	insertValues += ",\r\n";
+			//}
+		}
+		else if(column.Name == "UpdatedOn")
+		{
+			//audit column
+			if(insertParams != "")
+			{
+				insertParams += ",\r\n";
+			}
+			insertParams += ("\t@" + paramName + " " + column.DataTypeNameComplete + " OUTPUT");
+
+			updatedOn = true;
+			
+			if (insertFields != "")
+			{
+				insertFields += ",\r\n";
+				insertValues += ",\r\n";
+			}
+			insertFields += "\t\t[" + column.Name + "]";
+			insertValues += "\t\t@" + paramName;
+		}
+		else if (!column.IsComputed)
+		{
+			if (insertParams != "")
+			{
+				insertParams += ",\r\n";
+			}
+
+			insertParams += "\t@" + paramName + " " + column.DataTypeNameComplete;
+			 
+			if (column.IsNullable || column.IsAutoKey || column.IsComputed)
+			{
+				insertParams += " = NULL";
+	
+				if (column.IsAutoKey || column.IsComputed)
+				{
+					insertParams += " OUTPUT";
+				}
+			}
+
+			if (!column.IsAutoKey && !column.IsComputed)
+			{
+				if (insertFields != "")
+				{
+					insertFields += ",\r\n";
+					insertValues += ",\r\n";
+				}
+				
+				insertFields += "\t\t[" + column.Name + "]";
+				insertValues += "\t\t@" + paramName;
+			}
+		}
+
+		if (column.IsAutoKey)
+		{
+			insertAutoKeyCode += "\tSELECT @" + paramName + " = SCOPE_IDENTITY();\r\n";
+		}
+
+		if (column.IsComputed)
+		{
+			debugging += ("--IsComputed == true\r\n");
+			if (insertComputedCode == "") 
+			{
+				hasComputedFields = true;
+				insertComputedCode += "\tSELECT ";
+			}
+			else
+			{
+				insertComputedCode += ", \r\n";
+			}
+			insertComputedCode += ("\t\t@" + paramName + " = [" +  column.Name + "]"); 
+			debugging += ("--"+insertComputedCode+"\r\n");
+		}
+
+
+		if (!column.IsComputed || column.DataTypeName == "timestamp")
+		{
+			debugging += ("--IsComputed != true\r\n");
+			if (updateParams != "")
+			{
+				updateParams += ",\r\n";
+			}
+	
+			updateParams += "\t@" + paramName + " " + column.DataTypeNameComplete;
+			if(column.DataTypeName == "timestamp")
+			{
+				updateParams += " OUTPUT";
+			}
+			else if(column.Name == "UpdatedOn")
+			{
+				//audit column
+				updateParams += " OUTPUT";
+				updatedOn = true;
+			}
+			else if ((column.IsNullable || column.IsComputed) && column.DataTypeName != "timestamp")
+			{
+				updateParams += " = NULL";
+	
+				if (column.IsComputed)
+				{
+					updateParams += " output";
+				}
+			}			 
+	
+			if (column.IsInPrimaryKey || column.DataTypeName == "timestamp")
+			{
+				if (updateWhere != "")
+				{
+					updateWhere += " AND\r\n";
+				}
+	
+				//sql server 2005 doesn't support TSEQUAL()
+				updateWhere += "\t\t[" + column.Name + "] = @" + paramName;
+			}
+			
+			if (!column.IsComputed && !column.IsAutoKey && column.DataTypeName != "timestamp")
+			{
+				if (updateSet != "")
+				{
+					updateSet += ",\r\n";
+				}
+	
+				updateSet += "\t\t[" + column.Name + "] = @" + paramName;
+			}
+	
+			if (column.IsInPrimaryKey)
+			{
+				if (deleteParams != "")
+				{
+					deleteParams += ",\r\n";
+					deleteWhere += " AND\r\n";
+				}
+				deleteParams += "\t@" + column.Name + " " + column.DataTypeNameComplete;
+				deleteWhere += "\t\t[" + column.Name + "] = @" + paramName;
+			}
+		}
+
+	}
+	
+function getDateTime()
+{
+	var currDate = new Date();
+	dateDisplay = (eval(currDate.getMonth())+eval(1))+
+		"/"+currDate.getDate()+
+		"/"+currDate.getFullYear()+
+		" "+currDate.getHours()+":"+
+		currDate.getMinutes()+":"+
+		currDate.getSeconds();
+	return dateDisplay;
+}
+
+function IndexOf(myArray, key)
+{
+	var rc = -1;
+	
+	for(var i = 0;i<myArray.length;i++)
+	{
+		if(key==myArray[i])
+		{
+			rc = i;
+			break;
+		}
+	}
+	
+	return rc;
+}
+%>USE [<%= database.Name %>]
+GO
+
+set ANSI_NULLS ON
+set QUOTED_IDENTIFIER ON
+go
+
+--|--------------------------------------------------------------------------------
+--| [<%= insertProcName %>] - Insert Procedure Script for <%= tablenameFull %>
+--|--------------------------------------------------------------------------------
+IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = object_id (N'[<%=mySchema%>].[<%= insertProcName %>]') AND OBJECTPROPERTY(id, N'IsProcedure') = 1) DROP PROCEDURE [<%=mySchema%>].[<%= insertProcName %>]
+GO
+
+
+-- Proc: <%= insertProcName %>
+-- This proc was created by script. You can edit it, but if you do
+-- then DO NOT regenerate it from the script or you will loose your edits.
+-- <MetaData entityName="<%=tablename%>" commandType="Insert"/>
+CREATE PROCEDURE [<%=mySchema%>].[<%= insertProcName %>]
+(
+<%= insertParams %>
+)
+AS
+BEGIN
+	SET NOCOUNT ON
+	<% if(updatedOn == true) { %>
+	set @UpdatedOn = getdate();
+	<%}%>
+
+	INSERT INTO <%= tablenameFull %>
+	(
+<%= insertFields %>
+	)
+	VALUES
+	(
+<%= insertValues %>
+	)
+<%= (insertAutoKeyCode == "" ? "" : "\r\n" + insertAutoKeyCode) %><%
+
+if (hasComputedFields) 
+{
+	insertComputedCode += "\r\n\tFROM " + tablenameFull + "\r\n";
+	insertComputedCode += "\tWHERE " + deleteWhere + ";\r\n";
+}
+
+%>
+<%=insertComputedCode%>
+	RETURN @@Error
+END
+GO
+
+--|--------------------------------------------------------------------------------
+--| [<%= updateProcName %>] - Update Procedure Script for <%= tablenameFull %>
+--|--------------------------------------------------------------------------------
+IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = object_id (N'[<%=mySchema%>].[<%= updateProcName %>]') AND OBJECTPROPERTY(id, N'IsProcedure') = 1) DROP PROCEDURE [<%=mySchema%>].[<%= updateProcName %>]
+GO
+
+-- Proc: <%= updateProcName %>
+-- This proc was created by script. You can edit it, but if you do
+-- then DO NOT regenerate it from the script or you will loose your edits.
+-- <MetaData entityName="<%=tablename%>" commandType="Update"/>
+CREATE PROCEDURE [<%=mySchema%>].[<%= updateProcName %>]
+(
+<%= updateParams %>
+)
+AS
+BEGIN
+	SET NOCOUNT ON
+<% if (hasTimestamp) { %>	DECLARE @t TABLE(x int);<%}%>	
+<% if(updatedOn == true) { %>	set @UpdatedOn = getdate();<%}%>
+	
+	UPDATE <%= tablenameFull %>
+	SET
+<%= updateSet %>
+<% if (hasTimestamp) { %>	OUTPUT 1 into @t(x)<%}%>
+	WHERE 
+<%= updateWhere %>
+<% if (hasTimestamp) { %>
+	IF(SELECT COUNT(*) FROM @t) = 0
+	BEGIN
+		RAISERROR('Concurrency Error',16,1)
+	END
+<% } %>
+<%=insertComputedCode%>
+
+	RETURN @@Error
+END
+GO
+
+--|--------------------------------------------------------------------------------
+--| [<%= deleteProcName %>] - Delete Procedure Script for <%= tablenameFull %>
+--|--------------------------------------------------------------------------------
+IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = object_id (N'[<%=mySchema%>].[<%= deleteProcName %>]') AND OBJECTPROPERTY(id, N'IsProcedure') = 1) DROP PROCEDURE [<%=mySchema%>].[<%= deleteProcName %>]
+GO
+
+-- Proc: <%= deleteProcName %>
+-- This proc was created by script. You can edit it, but if you do
+-- then DO NOT regenerate it from the script or you will loose your edits.
+-- <MetaData entityName="<%=tablename%>" commandType="Delete"/>
+CREATE PROCEDURE [<%=mySchema%>].[<%= deleteProcName %>]
+(
+<%= deleteParams %>
+)
+AS
+BEGIN
+	SET NOCOUNT ON
+
+	DELETE 
+	FROM <%= tablenameFull %>
+	WHERE  
+<%= deleteWhere %>
+
+	RETURN @@Error
+END
+GO
+
+--|--------------------------------------------------------------------------------
+--| [<%= selectProcName %>] - Select Procedure Script for <%= tablenameFull %>
+--|--------------------------------------------------------------------------------
+IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = object_id (N'[<%=mySchema%>].[<%= selectProcName %>]') AND OBJECTPROPERTY(id, N'IsProcedure') = 1) DROP PROCEDURE [<%=mySchema%>].[<%= selectProcName %>]
+GO
+
+-- Proc: <%= selectProcName %>
+-- This proc was created by script. You can edit it, but if you do
+-- then DO NOT regenerate it from the script or you will loose your edits.
+-- <MetaData entityName="<%=tablename%>" commandType="Select"><!--
+--><Keys><!--
+<%
+for (var j = 0; j < tableMeta.Columns.Count; j++)
+{
+	var column = tableMeta.Columns.Item(j);
+	if (column.IsInPrimaryKey)
+	{
+		output.autoTabLn("--><Key>" + column.Name + "</Key><!--");
+	}
+}
+%>--></Keys><!--
+--></MetaData>
+CREATE PROCEDURE [<%=mySchema%>].[<%= selectProcName %>]
+(
+<%= deleteParams %>
+)
+AS
+BEGIN
+	SET NOCOUNT ON
+
+	select
+<%= selectFields %>
+	FROM <%= tablenameFull %>
+	WHERE  
+<%= deleteWhere %>
+
+	RETURN @@Error
+END
+GO
+
+--|--------------------------------------------------------------------------------
+--| [<%= selectProcName %>All] - Select All Procedure Script for <%= tablenameFull %>
+--|--------------------------------------------------------------------------------
+IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = object_id (N'[<%=mySchema%>].[<%= selectProcName %>All]') AND OBJECTPROPERTY(id, N'IsProcedure') = 1) DROP PROCEDURE [<%=mySchema%>].[<%= selectProcName %>All]
+GO
+
+-- Proc: <%= selectProcName %>All
+-- This proc was created by script. You can edit it, but if you do
+-- then DO NOT regenerate it from the script or you will loose your edits.
+-- <MetaData entityName="<%=tablename%>" commandType="Select"><!--
+--><Keys><!--
+<%
+for (var j = 0; j < tableMeta.Columns.Count; j++)
+{
+	var column = tableMeta.Columns.Item(j);
+	if (column.IsInPrimaryKey)
+	{
+		output.autoTabLn("--><Key>" + column.Name + "</Key><!--");
+	}
+}
+%>--></Keys><!--
+--></MetaData>
+CREATE PROCEDURE [<%=mySchema%>].[<%= selectProcName %>All]
+AS
+BEGIN
+	SET NOCOUNT ON
+
+	select
+<%= selectFields %>
+	FROM <%= tablenameFull %>
+
+	RETURN @@Error
+END
+GO
+
+<%
+	// get foreign key list and loop over
+	var fkSelectProcName;
+	var fkSelectCols;
+	var fkSelectParams;
+	var fkSelectWhere;
+	var fk;
+	var col;
+	
+	//debugger;
+
+	for(var x = 0; x < tableMeta.ForeignKeys.Count; x++)
+	{
+		fkSelectCols = "";
+		fkSelectParams = "";
+		fkSelectWhere = "\t\t";
+		
+		fk = tableMeta.ForeignKeys.Item(x);
+		var fkTableMeta = database.Tables.Item(fk.ForeignTable.Name);
+
+		fkSelectProcName = (fk.ForeignTable.Name+"SelectBy"+fk.PrimaryTable.Name);
+
+		// did this proc get created already?
+		if(IndexOf(fkProcList,fkSelectProcName) == -1)
+		{
+			fkProcList[fkProcList.length] = fkSelectProcName;
+		}
+		else
+		{
+			//output.autoTabLn("--continue");
+			continue;
+		}
+		
+		// Loop through all the columns of the table 
+		for (var j = 0; j < fkTableMeta.Columns.Count; j++) 
+		{
+			column = fkTableMeta.Columns.Item(j);
+			
+			if(fkSelectCols != "")
+			{
+				fkSelectCols += ",\r\n";
+			}
+			
+			fkSelectCols += ("\t\t["+column.Name+"]");
+		}
+
+		for(var j = 0; j < fk.ForeignColumns.Count; j++)
+		{
+			column = fk.ForeignColumns.Item(j);
+			paramName = column.Name.split(' ').join('');
+						
+			if(j != 0)
+			{
+				fkSelectParams += (",\r\n");
+				fkSelectWhere += ("\r\n\t\tAND ");
+			}
+			
+			fkSelectParams += ("\t@" + paramName + " " + column.DataTypeNameComplete);
+			fkSelectWhere += ("["+column.Name+"] = @"+paramName);
+		}
+		
+%>
+--|--------------------------------------------------------------------------------
+--| [<%=fkSelectProcName%>] - Select Procedure Script for <%=fk.ForeignTable.Name%>
+--|--------------------------------------------------------------------------------
+IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = object_id (N'[<%=mySchema%>].[<%=fkSelectProcName%>]') AND OBJECTPROPERTY(id, N'IsProcedure') = 1) DROP PROCEDURE [<%=mySchema%>].[<%=fkSelectProcName%>]
+GO
+
+-- Proc: <%=fkSelectProcName%>
+-- This proc was created by script. You can edit it, but if you do
+-- then DO NOT regenerate it from the script or you will loose your edits.
+-- <MetaData entityName="<%=fk.ForeignTable.Name%>" commandType="Select"><!--
+--><Keys><!--
+<%
+for (var j = 0; j < fkTableMeta.Columns.Count; j++)
+{
+	var column = fkTableMeta.Columns.Item(j);
+	if (column.IsInPrimaryKey)
+	{
+		output.autoTabLn("--><Key>" + column.Name + "</Key><!--");
+	}
+}
+%>--></Keys><!--
+--></MetaData>
+CREATE PROCEDURE [<%=mySchema%>].[<%=fkSelectProcName%>]
+(
+<%=fkSelectParams%>
+)
+AS
+BEGIN
+	SET NOCOUNT ON
+
+	select
+<%=fkSelectCols %>
+	FROM [<%=fk.ForeignTable.Schema%>].[<%=fk.ForeignTable.Name%>]
+	WHERE  
+<%=fkSelectWhere%>
+
+	RETURN @@Error
+END
+GO
+
+<%
+	}//end loop
+%>
+
+<%
+	// Save this set of procedures to disk
+	output.save(filename, false);
+	buffer += output.text;
+	output.clear();
+}
+
+output.write(buffer);
+%>
+##|BODY_END
