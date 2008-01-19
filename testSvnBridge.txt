@@ -1,3 +1,0 @@
-test
-test line 2
-x
