@@ -1,6 +1,6 @@
 ﻿##|TYPE Template
 ##|UNIQUEID 569c8003-57ba-4bb5-a9dd-b6ca712b36e5
-##|TITLE Basic CRUD Plus SelectBy FK
+##|TITLE Basic CRUD Plus SelectBy FK v1.1
 ##|NAMESPACE ZacksFiasco.DataAccessLayer.SQLServer2005
 ##|SOURCE_TYPE Source
 ##|OUTPUT_LANGUAGE Transact-SQL
@@ -158,103 +158,142 @@ var fkProcList = new Array();
 
 for (var i = 0; i < tablenames.Count; i++)
 {
-	//var tablename = tablenames.item(i);
-	//var tableMeta = database.Tables.Item(tablename);
-	
 	var tableMeta = database.Tables.Item(tablenames.item(i));
 	var tablename = tableMeta.Name;
 	var tablenameFull = ("[" + tableMeta.Schema + "].[" + tableMeta.Name + "]");
 	
-	// Build the filename
+	// Build the filename to save all procedures generated
+	// for or by this table.
 	var filename = filepath + "sql_procs_" + tablename + ".sql"
 
-	var insertProcName = tablename + "Insert";
-	var insertParams = "";
-	var insertFields = "";
-	var insertValues = "";
-	var insertAutoKeyCode = "";
-	var insertComputedCode = "";
+	var insertProcName = tablename + "Insert";	// insert procedure name
+	var insertParams = "";						// parameters of insert procedure
+	var insertFields = "";						// column names to insert into table
+	var insertValues = "";						// values to insert into table
+	var insertComputedTableVar = "";			// generated TSQL to hold computed values
+	var insertComputedCode = "";				// generated TSQL to retrieve Computed values
+	var insertComputedReturn = "";				// code to return values into output parameters
 
-	var updateProcName = tablename + "Update";
-	var updateParams = "";
-	var updateSet = "";
-	var updateWhere = "";
+	var updateProcName = tablename + "Update";	// update procedure name
+	var updateParams = "";						// update procedure parameters
+	var updateSet = "";							// SET code of a TSQL update command
+	var updateWhere = "";						// WHERE clause of the update command
+	var updateComputedTableVar = "";			// generated TSQL to cold computed values
+	var updateComputedCode = "";				// generated TSQL to retrieve Computed values
+	var updateComputedReturn = "";				// code to return values into output parameters
 
-	var deleteProcName = tablename + "Delete";
-	var deleteParams = "";
-	var deleteWhere = "";
+	var deleteProcName = tablename + "Delete";	// delete procedure
+	var deleteParams = "";						// delete procedure commands (usually the row key(s))
+	var deleteWhere = "";						// WHERE clause the for the TSQL delete command (usually the row key(s))
 	
-	var selectProcName = tablename + "Select";
-	var selectParams = "";
-	var selectFields = "";
-	var selectWhere = "";
+	var selectProcName = tablename + "Select"; 	// select procedure name
+	var selectParams = "";						// select procedure parameters
+	var selectFields = "";						// fields to return from the select
+	var selectWhere = "";						// where clause for the TSQL select command
 
-	var paramName = "";
+	var paramName = "";							// the parameter name generated from the 'current' table column
 
-	var hasComputedFields = false;
-	var hasTimestamp = false;
-	var timestampColumn = "";
-	var timestampParam = "";
+	var hasComputedFields = false;				// bool value indicating if the table has any computed columns
+	var hasTimestamp = false;					// bool value indicating if the table has any timestamp columns
+	var timestampColumn = "";					// the timestamp column
+	var timestampParam = "";					// the timestamp procedure(s) parameter
 	
-	var updatedOn = false;
+	var updatedOn = false;						// bool value indicating if the table has an UpdatedOn column
 	
-	var debugging = "";
+	var debugging = "";							// string used for debugging. if you are debuggin, you can output this at the end of the file(s)
 
 	// Loop through all the columns of the table 
 	for (var j = 0; j < tableMeta.Columns.Count; j++) 
 	{
 		column = tableMeta.Columns.Item(j);
+		
+		// generate the parameter name
 		paramName = column.Name.split(' ').join('')
-		debugging += ("--" + column.Name + ": " + column.DataTypeName+"\r\n");//zack
+		
+		debugging += ("--" + column.Name + ": " + column.DataTypeName+"\r\n");
 
+		// populate SELECT fields
 		if(selectFields != "")
 		{
 			selectFields += ",\r\n";
 		}
 		
 		selectFields += ("\t\t["+column.Name+"]");
+
+		// populate INSERT fields and parameters
 		
-		// If the datatype is not a timestamp, add it to the insert statement
-		if (column.DataTypeName == "timestamp")
+		// if column is computed or is an autokey (both of which
+		// are populated on insert) then set it as an IN OUT parameter
+		if(column.IsComputed || column.IsAutoKey)
 		{
-			debugging += ("--hasTimestamp==true\r\n");
-			hasTimestamp = true;
-			timestampColumn = column.Name;
-			timestampParam = paramName;
+			hasComputedFields = true;
+			
+			if (column.DataTypeName == "timestamp")
+			{
+				debugging += ("--hasTimestamp==true\r\n");
+			
+				// set the timestamp bool so we know to use 
+				// timestamp in updates
+				hasTimestamp = true;
+				
+				// remember the timestamp for updates
+				timestampColumn = column.Name;
+				timestampParam = paramName;
+			}
 			
 			if(insertParams != "")
 			{
 				insertParams += ",\r\n";
 			}
-
-			insertParams += ("\t@" + paramName + " " + column.DataTypeNameComplete + " OUTPUT");
-						
-			//if (insertFields != "")
-			//{
-			//	insertFields += ",\r\n";
-			//	insertValues += ",\r\n";
-			//}
-		}
-		else if(column.Name == "UpdatedOn")
-		{
-			//audit column
-			if(insertParams != "")
-			{
-				insertParams += ",\r\n";
-			}
-			insertParams += ("\t@" + paramName + " " + column.DataTypeNameComplete + " OUTPUT");
-
-			updatedOn = true;
 			
+			insertParams += ("\t@" + paramName + " " + column.DataTypeNameComplete + " = NULL OUTPUT");
+
+			/* auto and computed columns aren't used? Jan 2008
 			if (insertFields != "")
 			{
 				insertFields += ",\r\n";
 				insertValues += ",\r\n";
 			}
+			
+			insertFields += "\t\t[" + column.Name + "]";
+			insertValues += "\t\t@" + paramName;
+			*/
+		}
+		// special case for columns named UpdatedOn
+		// if this column exists then we generate code in the SP
+		// to set it to current datetime on every insert or update
+		else if(column.Name == "UpdatedOn")
+		{
+			updatedOn = true;
+			
+			//audit column
+			if(insertParams != "")
+			{
+				insertParams += ",\r\n";
+			}
+			
+			if(column.IsNullable)
+			{
+				insertParams += ("\t@" + paramName + " " + column.DataTypeNameComplete + " = NULL OUTPUT");
+			}
+			else
+			{
+				insertParams += ("\t@" + paramName + " " + column.DataTypeNameComplete + " OUTPUT");
+			}			
+			
+			// build the insert fields and values strings
+			if (insertFields != "")
+			{
+				insertFields += ",\r\n";
+				insertValues += ",\r\n";
+			}
+			
 			insertFields += "\t\t[" + column.Name + "]";
 			insertValues += "\t\t@" + paramName;
 		}
-		else if (!column.IsComputed)
+		// if a column is not a computed column
+		// add it to the list of stored procedure parameters
+		else
 		{
 			if (insertParams != "")
 			{
@@ -262,82 +301,146 @@ for (var i = 0; i < tablenames.Count; i++)
 			}
 
 			insertParams += "\t@" + paramName + " " + column.DataTypeNameComplete;
-			 
-			if (column.IsNullable || column.IsAutoKey || column.IsComputed)
+			
+			if(column.IsNullable)
 			{
-				insertParams += " = NULL";
-	
-				if (column.IsAutoKey || column.IsComputed)
-				{
-					insertParams += " OUTPUT";
-				}
-			}
-
-			if (!column.IsAutoKey && !column.IsComputed)
+				insertParams += " = NULL"
+			}	
+			
+			if (insertFields != "")
 			{
-				if (insertFields != "")
-				{
-					insertFields += ",\r\n";
-					insertValues += ",\r\n";
-				}
-				
-				insertFields += "\t\t[" + column.Name + "]";
-				insertValues += "\t\t@" + paramName;
+				insertFields += ",\r\n";
+				insertValues += ",\r\n";
 			}
+			
+			insertFields += "\t\t[" + column.Name + "]";
+			insertValues += "\t\t@" + paramName;
 		}
 
+		/* this is obsolete with the new OUTPUT code
+		// generate code to retrieve autokey values on insert
 		if (column.IsAutoKey)
 		{
 			insertAutoKeyCode += "\tSELECT @" + paramName + " = SCOPE_IDENTITY();\r\n";
 		}
-
-		if (column.IsComputed)
+		*/
+		
+		// generate code to retrieve computed values on insert
+		if (column.IsComputed || column.IsAutoKey)
 		{
+			hasComputedFields = true;
+				
 			debugging += ("--IsComputed == true\r\n");
-			if (insertComputedCode == "") 
-			{
-				hasComputedFields = true;
-				insertComputedCode += "\tSELECT ";
-			}
-			else
+			
+			// build the list of values to go in the
+			// OUTPUT clause
+			if (insertComputedCode != "") 
 			{
 				insertComputedCode += ", \r\n";
 			}
-			insertComputedCode += ("\t\t@" + paramName + " = [" +  column.Name + "]"); 
+			
+			insertComputedCode += "\t\tINSERTED.[" + column.Name + "]";
 			debugging += ("--"+insertComputedCode+"\r\n");
+			
+			// build the list of columns for the table variable
+			// to hold the OUTPUT values
+			if(insertComputedTableVar != "")
+			{
+				insertComputedTableVar += ", \r\n";
+			}
+			
+			if(column.DataTypeName == "timestamp")
+			{
+				insertComputedTableVar += "\t\t[" + column.Name + "] binary(8)";
+			}
+			else
+			{
+				insertComputedTableVar += "\t\t[" + column.Name + "] " + column.DataTypeNameComplete;
+			}
+			
+			// build a list of select columns to return 
+			// output parameters
+			if(insertComputedReturn != "")
+			{
+				insertComputedReturn += ", \r\n";
+			}
+			
+			insertComputedReturn += "\t\t@" + paramName + " = [" + column.Name + "]";
 		}
 
-
-		if (!column.IsComputed || column.DataTypeName == "timestamp")
+		// generate code to retrieve computed values on update
+		// we don't want autokey columns to be output in update because they are only set on insert
+		if (column.IsComputed)
 		{
-			debugging += ("--IsComputed != true\r\n");
+			if (updateParams != "")
+			{
+				updateParams += ",\r\n";
+			}
+
+			updateParams += "\t@" + paramName + " " + column.DataTypeNameComplete + " = NULL OUTPUT";
+			
+			// the timestamp is used in the update WHERE clause
+			if (column.DataTypeName == "timestamp")
+			{
+				// this should already be set, but I'm setting it here just to be sure
+				hasTimestamp = true;
+				
+				if (updateWhere != "")
+				{
+					updateWhere += " AND\r\n";
+				}
+	
+				//sql server 2005 doesn't support TSEQUAL()
+				updateWhere += "\t\t[" + column.Name + "] = @" + paramName;
+			}
+			
+			// update table variable columns
+			if(updateComputedTableVar != "")
+			{
+				updateComputedTableVar += ",\r\n";
+			}
+			
+			if(column.DataTypeName == "timestamp")
+			{
+				updateComputedTableVar += "\t\t[" + column.Name + "] binary(8)";
+			}
+			else
+			{
+				updateComputedTableVar += "\t\t[" + column.Name + "] " + column.DataTypeNameComplete;
+			}
+
+			// update output
+			if(updateComputedCode != "")
+			{
+				updateComputedCode += ",\r\n";
+			}
+			
+			updateComputedCode += "\t\tINSERTED.[" + column.Name + "]";
+			
+			// update output return
+			if(updateComputedReturn != "")
+			{
+				updateComputedReturn += ",\r\n";
+			}
+			
+			updateComputedReturn += "\t\t@" + paramName + " = [" + column.Name + "]";			
+		}
+		else
+		{
 			if (updateParams != "")
 			{
 				updateParams += ",\r\n";
 			}
 	
 			updateParams += "\t@" + paramName + " " + column.DataTypeNameComplete;
-			if(column.DataTypeName == "timestamp")
-			{
-				updateParams += " OUTPUT";
-			}
-			else if(column.Name == "UpdatedOn")
+			if(column.Name == "UpdatedOn")
 			{
 				//audit column
-				updateParams += " OUTPUT";
+				updateParams += " = NULL OUTPUT";
 				updatedOn = true;
-			}
-			else if ((column.IsNullable || column.IsComputed) && column.DataTypeName != "timestamp")
-			{
-				updateParams += " = NULL";
-	
-				if (column.IsComputed)
-				{
-					updateParams += " output";
-				}
 			}			 
 	
-			if (column.IsInPrimaryKey || column.DataTypeName == "timestamp")
+			if (column.IsInPrimaryKey)
 			{
 				if (updateWhere != "")
 				{
@@ -348,28 +451,28 @@ for (var i = 0; i < tablenames.Count; i++)
 				updateWhere += "\t\t[" + column.Name + "] = @" + paramName;
 			}
 			
-			if (!column.IsComputed && !column.IsAutoKey && column.DataTypeName != "timestamp")
+			if(!column.IsAutoKey)
 			{
 				if (updateSet != "")
 				{
 					updateSet += ",\r\n";
 				}
-	
+		
 				updateSet += "\t\t[" + column.Name + "] = @" + paramName;
 			}
-	
-			if (column.IsInPrimaryKey)
-			{
-				if (deleteParams != "")
-				{
-					deleteParams += ",\r\n";
-					deleteWhere += " AND\r\n";
-				}
-				deleteParams += "\t@" + column.Name + " " + column.DataTypeNameComplete;
-				deleteWhere += "\t\t[" + column.Name + "] = @" + paramName;
-			}
 		}
-
+		
+		// calculate Delete Where clause and parameters
+		if (column.IsInPrimaryKey)
+		{
+			if (deleteParams != "")
+			{
+				deleteParams += ",\r\n";
+				deleteWhere += " AND\r\n";
+			}
+			deleteParams += "\t@" + column.Name + " " + column.DataTypeNameComplete;
+			deleteWhere += "\t\t[" + column.Name + "] = @" + paramName;
+		}
 	}
 	
 function getDateTime()
@@ -424,28 +527,36 @@ CREATE PROCEDURE [<%=mySchema%>].[<%= insertProcName %>]
 AS
 BEGIN
 	SET NOCOUNT ON
-	<% if(updatedOn == true) { %>
+	<% if(hasComputedFields) { %>
+	declare @t table
+	(
+<%=insertComputedTableVar%>
+	)
+	<% 
+	}
+	if(updatedOn == true) { %>
 	set @UpdatedOn = getdate();
-	<%}%>
+	<%
+	}%>
 
 	INSERT INTO <%= tablenameFull %>
 	(
 <%= insertFields %>
-	)
+	)<% 
+	if(hasComputedFields) { %>
+	OUTPUT
+<%=insertComputedCode%>
+	INTO @t<%
+	}%>
 	VALUES
 	(
 <%= insertValues %>
 	)
-<%= (insertAutoKeyCode == "" ? "" : "\r\n" + insertAutoKeyCode) %><%
-
-if (hasComputedFields) 
-{
-	insertComputedCode += "\r\n\tFROM " + tablenameFull + "\r\n";
-	insertComputedCode += "\tWHERE " + deleteWhere + ";\r\n";
-}
-
-%>
-<%=insertComputedCode%>
+	<%if(hasComputedFields) { %>
+	SELECT
+<%=insertComputedReturn%>	
+	FROM @t
+	<%}%>
 	RETURN @@Error
 END
 GO
@@ -467,13 +578,23 @@ CREATE PROCEDURE [<%=mySchema%>].[<%= updateProcName %>]
 AS
 BEGIN
 	SET NOCOUNT ON
-<% if (hasTimestamp) { %>	DECLARE @t TABLE(x int);<%}%>	
-<% if(updatedOn == true) { %>	set @UpdatedOn = getdate();<%}%>
-	
+	<% if(hasComputedFields) { %>
+	declare @t table
+	(
+<%=updateComputedTableVar%>
+	)
+<%	} 
+	if(updatedOn == true) { %>
+	set @UpdatedOn = getdate();
+	<%}%>	
 	UPDATE <%= tablenameFull %>
 	SET
-<%= updateSet %>
-<% if (hasTimestamp) { %>	OUTPUT 1 into @t(x)<%}%>
+<%= updateSet%><% 
+	if(hasComputedFields) { %>
+	OUTPUT
+<%= updateComputedCode %>
+	INTO @t<%
+	}%>
 	WHERE 
 <%= updateWhere %>
 <% if (hasTimestamp) { %>
@@ -481,9 +602,12 @@ BEGIN
 	BEGIN
 		RAISERROR('Concurrency Error',16,1)
 	END
-<% } %>
-<%=insertComputedCode%>
-
+<% 	} 
+	if(hasComputedFields) { %>
+	SELECT
+<%=updateComputedReturn%>	
+	FROM @t
+	<%}%>
 	RETURN @@Error
 END
 GO
