@@ -120,11 +120,11 @@ function cmbDatabases_onchange(control)
 ##|BODY_BEGIN
 <%
 // Zack Moore
-// 26 Oct 2007
+// 20 Jan 2008
 // http://zacksfiasco.blogspot.com/
 //
 // Published under the Microsoft Public License. See source code download for a copy of the license. 
-// Copyright 2007 Zack Moore
+// Copyright 2008 Zack Moore
 //
 //------------------------------------------------------------------------------
 //
@@ -316,14 +316,6 @@ for (var i = 0; i < tablenames.Count; i++)
 			insertFields += "\t\t[" + column.Name + "]";
 			insertValues += "\t\t@" + paramName;
 		}
-
-		/* this is obsolete with the new OUTPUT code
-		// generate code to retrieve autokey values on insert
-		if (column.IsAutoKey)
-		{
-			insertAutoKeyCode += "\tSELECT @" + paramName + " = SCOPE_IDENTITY();\r\n";
-		}
-		*/
 		
 		// generate code to retrieve computed values on insert
 		if (column.IsComputed || column.IsAutoKey)
