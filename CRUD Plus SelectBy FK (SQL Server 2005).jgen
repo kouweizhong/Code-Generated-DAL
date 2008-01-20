@@ -247,17 +247,6 @@ for (var i = 0; i < tablenames.Count; i++)
 			}
 			
 			insertParams += ("\t@" + paramName + " " + column.DataTypeNameComplete + " = NULL OUTPUT");
-
-			/* auto and computed columns aren't used? Jan 2008
-			if (insertFields != "")
-			{
-				insertFields += ",\r\n";
-				insertValues += ",\r\n";
-			}
-			
-			insertFields += "\t\t[" + column.Name + "]";
-			insertValues += "\t\t@" + paramName;
-			*/
 		}
 		// special case for columns named UpdatedOn
 		// if this column exists then we generate code in the SP
