@@ -518,7 +518,7 @@ CREATE PROCEDURE [<%=mySchema%>].[<%= insertProcName %>]
 AS
 BEGIN
 	SET NOCOUNT ON
-	<% if(hasAutoOrKComputedFields) { %>
+	<% if(hasAutoOrComputedFields) { %>
 
 	declare @t table
 	(
@@ -535,7 +535,7 @@ BEGIN
 	(
 <%= insertFields %>
 	)<% 
-	if(hasAutoOrKComputedFields) { %>
+	if(hasAutoOrComputedFields) { %>
 	OUTPUT
 <%=insertComputedCode%>
 	INTO @t<%
@@ -544,7 +544,7 @@ BEGIN
 	(
 <%= insertValues %>
 	)
-	<%if(hasAutoOrKComputedFields) { %>
+	<%if(hasAutoOrComputedFields) { %>
 	SELECT
 <%=insertComputedReturn%>	
 	FROM @t
