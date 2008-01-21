@@ -194,6 +194,8 @@ for (var i = 0; i < tablenames.Count; i++)
 	var paramName = "";							// the parameter name generated from the 'current' table column
 
 	var hasComputedFields = false;				// bool value indicating if the table has any computed columns
+	var hasAutoOrComputedFields = false;		// bool value indicating if the table has any computed and/or autokey fiels
+	var hasAutoKeyFields = false;				// bool value indicating if the table has any autokey fields
 	var hasTimestamp = false;					// bool value indicating if the table has any timestamp columns
 	var timestampColumn = "";					// the timestamp column
 	var timestampParam = "";					// the timestamp procedure(s) parameter
@@ -219,6 +221,18 @@ for (var i = 0; i < tablenames.Count; i++)
 		}
 		
 		selectFields += ("\t\t["+column.Name+"]");
+		
+		if(column.IsComputed)
+		{
+			hasAutoOrKComputedFields = true;
+			hasComputedFields = true;
+		}
+		
+		if(column.IsAutoKey)
+		{
+			hasAutoOrKComputedFields = true;
+			hasAutoKeyFields = true;
+		}
 
 		// populate INSERT fields and parameters
 		
@@ -226,8 +240,6 @@ for (var i = 0; i < tablenames.Count; i++)
 		// are populated on insert) then set it as an IN OUT parameter
 		if(column.IsComputed || column.IsAutoKey)
 		{
-			hasComputedFields = true;
-			
 			if (column.DataTypeName == "timestamp")
 			{
 				debugging += ("--hasTimestamp==true\r\n");
@@ -309,8 +321,6 @@ for (var i = 0; i < tablenames.Count; i++)
 		// generate code to retrieve computed values on insert
 		if (column.IsComputed || column.IsAutoKey)
 		{
-			hasComputedFields = true;
-				
 			debugging += ("--IsComputed == true\r\n");
 			
 			// build the list of values to go in the
@@ -508,7 +518,8 @@ CREATE PROCEDURE [<%=mySchema%>].[<%= insertProcName %>]
 AS
 BEGIN
 	SET NOCOUNT ON
-	<% if(hasComputedFields) { %>
+	<% if(hasAutoOrKComputedFields) { %>
+
 	declare @t table
 	(
 <%=insertComputedTableVar%>
@@ -524,7 +535,7 @@ BEGIN
 	(
 <%= insertFields %>
 	)<% 
-	if(hasComputedFields) { %>
+	if(hasAutoOrKComputedFields) { %>
 	OUTPUT
 <%=insertComputedCode%>
 	INTO @t<%
@@ -533,7 +544,7 @@ BEGIN
 	(
 <%= insertValues %>
 	)
-	<%if(hasComputedFields) { %>
+	<%if(hasAutoOrKComputedFields) { %>
 	SELECT
 <%=insertComputedReturn%>	
 	FROM @t
