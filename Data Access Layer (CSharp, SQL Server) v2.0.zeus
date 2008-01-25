@@ -1,6 +1,6 @@
 ﻿##|TYPE Template
 ##|UNIQUEID dd05bd78-2a91-4f04-b1ea-7cfe919b4943
-##|TITLE Data Access Layer (C#, SQL Server) v2.0
+##|TITLE Data Access Layer (C#, SQL Server) v2.1
 ##|NAMESPACE ZacksFiasco.DataAccessLayer.SQLServer2005
 ##|SOURCE_TYPE Source
 ##|OUTPUT_LANGUAGE C#
@@ -137,8 +137,8 @@ End Sub
 // Data Access Layer (C#, SQL Server)
 // v2.0
 // Zack Moore
-// 29 Oct 2007
-// http://zacksfiasco.blogspot.com/
+// 24 Jan 2008
+// http://ZacksFiasco.com/
 //
 // Published under the Microsoft Public License. See source code download for a copy of the license. 
 // Copyright 2007 Zack Moore
@@ -212,7 +212,7 @@ using System.Text;
 namespace <%=myNamespace%>
 {
 	[DataObjectAttribute]
-    public class <%=myClass%>: IDisposable
+    public partial class <%=myClass%>: IDisposable
     {
 		public <%=myClass%>(string ConnectionName)
 		{
@@ -741,7 +741,12 @@ namespace <%=myNamespace%>
 				
 				if(commandType == "Select")
 				{
-					output.autoTabLn(string.Format("List<{0}> rc = new List<{0}>();", entity.Name));				
+					output.autoTabLn(string.Format("List<{0}> rc = new List<{0}>();", entity.Name));
+
+					output.autoTabLn("try");
+					output.autoTabLn("{");
+					output.incTab();
+					
 					output.autoTabLn("while(Reader.Read())");
 					output.autoTabLn("{");
 					output.incTab();
@@ -749,6 +754,16 @@ namespace <%=myNamespace%>
 						entity.Name));
 					output.decTab();
 					output.autoTabLn("}");
+					
+					output.decTab();
+					output.autoTabLn("}");
+					output.autoTabLn("finally");
+					output.autoTabLn("{");
+					output.incTab();
+					output.autoTabLn("Reader.Dispose();");
+					output.decTab();
+					output.autoTabLn("}");
+					
 					output.autoTabLn("return rc;");
 				}
 				else if(returnParam != null)
@@ -794,9 +809,12 @@ namespace <%=myNamespace%>
 			string entityName = DnpUtils.SetPascalCase(e.Name);
 			
 %>
-	public class <%=entityName%>: INotifyPropertyChanged
+	public partial class <%=entityName%>: INotifyPropertyChanged
 	{
-		//todo: add constructor that takes IDataReader
+		public <%=entityName%>()
+		{
+		}
+		
 		public <%=entityName%>(IDataReader Reader)
 		{
 			// read the fields out of the data reader and into local variables
