@@ -1,6 +1,6 @@
 ﻿##|TYPE Template
 ##|UNIQUEID 569c8003-57ba-4bb5-a9dd-b6ca712b36e5
-##|TITLE Basic CRUD Plus SelectBy FK v1.1
+##|TITLE Basic CRUD Plus SelectBy FK v1.3
 ##|NAMESPACE ZacksFiasco.DataAccessLayer.SQLServer2005
 ##|SOURCE_TYPE Source
 ##|OUTPUT_LANGUAGE Transact-SQL
@@ -13,7 +13,7 @@ function setup()
 	{
 		ui.Title = "SQL Stored Procedures - Insert/Update/Delete";
 		ui.Width = 400;
-		ui.Height = 650;
+		ui.Height = 800;
 
 		// Grab default output path
 		var sOutputPath = "";
@@ -21,7 +21,7 @@ function setup()
 		{
 			sOutputPath = input.Item("defaultOutputPath");
 		}
-
+		
 		// Display and errors here
 		var lblError = ui.AddLabel("lblError", "", "");
 		lblError.ForeColor = "Red";
@@ -33,6 +33,12 @@ function setup()
 
 		ui.AddLabel("lblSchema", "Schema to put procs in:", "Enter the schema to put the procs in.");
 		ui.AddTextBox("txtSchema", "api", "Schema to put procs in:");
+		ui.AddCheckBox("cbUse", "Include 'USE <DB>'", true, "Check this box to include a USE statement at the top of each file.");
+
+		ui.AddCheckBox("cbCreate", "Include Create (INSERT) SPROCS", true, "Check this box to include INSERT SPROCS.");
+		ui.AddCheckBox("cbRead", "Include Read (SELECT) SPROCS", true, "Check this box to include SELECT SPROCS.");
+		ui.AddCheckBox("cbUpdate", "Include Update SPROCS", true, "Check this box to include UPDATE SPROCS.");
+		ui.AddCheckBox("cbDelete", "Include Delete SPROCS", true, "Check this box to include DELETE SPROCS.");
 
 		// Setup Database selection combobox.
 		var label_d = ui.AddLabel("lblDatabases", "Select a database:", "Select a database in the dropdown below.");
@@ -121,7 +127,7 @@ function cmbDatabases_onchange(control)
 <%
 // Zack Moore
 // 20 Jan 2008
-// http://zacksfiasco.blogspot.com/
+// http://ZacksFiasco.com/
 //
 // Published under the Microsoft Public License. See source code download for a copy of the license. 
 // Copyright 2008 Zack Moore
@@ -224,13 +230,13 @@ for (var i = 0; i < tablenames.Count; i++)
 		
 		if(column.IsComputed)
 		{
-			hasAutoOrKComputedFields = true;
+			hasAutoOrComputedFields = true;
 			hasComputedFields = true;
 		}
 		
 		if(column.IsAutoKey)
 		{
-			hasAutoOrKComputedFields = true;
+			hasAutoOrComputedFields = true;
 			hasAutoKeyFields = true;
 		}
 
@@ -493,13 +499,19 @@ function IndexOf(myArray, key)
 	
 	return rc;
 }
+
+if(input.Item("cbUse") == true)
+{
 %>USE [<%= database.Name %>]
 GO
-
+<%
+}
+%>
 set ANSI_NULLS ON
 set QUOTED_IDENTIFIER ON
 go
 
+<%if(input.Item("cbCreate") == true){%>
 --|--------------------------------------------------------------------------------
 --| [<%= insertProcName %>] - Insert Procedure Script for <%= tablenameFull %>
 --|--------------------------------------------------------------------------------
@@ -552,7 +564,8 @@ BEGIN
 	RETURN @@Error
 END
 GO
-
+<%}%>
+<%if(input.Item("cbUpdate") == true){%>
 --|--------------------------------------------------------------------------------
 --| [<%= updateProcName %>] - Update Procedure Script for <%= tablenameFull %>
 --|--------------------------------------------------------------------------------
@@ -603,7 +616,8 @@ BEGIN
 	RETURN @@Error
 END
 GO
-
+<%}%>
+<%if(input.Item("cbDelete") == true){%>
 --|--------------------------------------------------------------------------------
 --| [<%= deleteProcName %>] - Delete Procedure Script for <%= tablenameFull %>
 --|--------------------------------------------------------------------------------
@@ -630,7 +644,8 @@ BEGIN
 	RETURN @@Error
 END
 GO
-
+<%}%>
+<%if(input.Item("cbRead") == true){%>
 --|--------------------------------------------------------------------------------
 --| [<%= selectProcName %>] - Select Procedure Script for <%= tablenameFull %>
 --|--------------------------------------------------------------------------------
@@ -810,6 +825,7 @@ GO
 
 <%
 	}//end loop
+	}//end if(cbRead)
 %>
 
 <%
