@@ -1,6 +1,6 @@
 ﻿##|TYPE Template
 ##|UNIQUEID dd05bd78-2a91-4f04-b1ea-7cfe919b4943
-##|TITLE Data Access Layer (C#, SQL Server) v2.1
+##|TITLE Data Access Layer (C#, SQL Server) v2.4
 ##|NAMESPACE ZacksFiasco.DataAccessLayer.SQLServer2005
 ##|SOURCE_TYPE Source
 ##|OUTPUT_LANGUAGE C#
@@ -8,8 +8,15 @@
 changes:
 1. added data objects
 2. added methods that return and accept data objects as parameters
-3. data objects are controled by custom <MetaData> XML section added to stored procedures
+3. data objects are controled by custom <MetaData> 
+XML section added to stored procedures
 4. constructor now requires a Connection Name which is uses to retrieve the correct connection from the configuration
+
+v2.3
+1. added "_" to begining of all private variables to avoide many name collisions with c# keywords such as "event"
+
+v.2.4
+1. added code to skip Table Functions
 ##|COMMENTS_END
 ##|GUI_ENGINE Microsoft Script
 ##|GUI_LANGUAGE VBScript
@@ -296,10 +303,29 @@ namespace <%=myNamespace%>
 		Trace("begining procedure loop.");
 		foreach(IProcedure objProc in database.Procedures)
 		{
+			// check to make sure this procedure is in the schema we are looking for
 			if(objProc.Schema != mySchema)
 			{
 				continue;
 			}
+			
+			//check for Table value Functions
+			bool isTableFunction = false;
+			foreach(IParameter param in objProc.Parameters)
+			{
+				if(param.Direction == ParamDirection.ReturnValue && param.TypeName == "table")
+				{
+					isTableFunction = true;
+					break;
+				}
+			}
+			
+			if(isTableFunction)
+			{
+				// this script can't handle Table Functions so we skip it
+				continue;
+			}
+			
 			Trace("Proc: " + objProc.Name);
 			
 			// extract meta data from procedure
@@ -457,6 +483,7 @@ namespace <%=myNamespace%>
 			disposeList.Add(string.Format("cmd{0}",subName));
 			
 %>		SqlCommand cmd<%=subName%>=null;
+		partial void on<%=subName%>CommandCreated(SqlCommand cmd);
 
 		public <%=returnValue%> <%=subName%>(<%=paramList.ToString()%>)
 		{
@@ -465,7 +492,7 @@ namespace <%=myNamespace%>
 
 			if(returnParam != null)
 			{
-				output.autoTabLn(string.Format("{0} rc;",returnParam.LanguageType));
+				output.autoTabLn(string.Format("{0} rc;", returnValue));
 			}
 %>
 			if(cmd<%=subName%>==null)
@@ -503,6 +530,7 @@ namespace <%=myNamespace%>
 				}
 			}
 %>
+				on<%=subName%>CommandCreated(cmd);
 				cmd<%=subName%> = cmd;
 			}//end if
 			
@@ -824,12 +852,12 @@ namespace <%=myNamespace%>
 				
 				if(f.IsNullable == false)
 				{
-					output.autoTabLn(string.Format("this.{0} = ({1})Reader[\"{2}\"];", 
+					output.autoTabLn(string.Format("this._{0} = ({1})Reader[\"{2}\"];", 
 						DnpUtils.SetCamelCase(f.Name), f.Type, f.DbName));					
 				}
 				else
 				{				
-					output.autoTabLn(string.Format("this.{0} = Reader[\"{1}\"] as {2}{3};", 
+					output.autoTabLn(string.Format("this._{0} = Reader[\"{1}\"] as {2}{3};", 
 						DnpUtils.SetCamelCase(f.Name), f.DbName, f.Type, 
 						(f.ClassType == ClassType.ValueType && f.IsNullable)?"?":string.Empty));					
 				}
@@ -857,17 +885,17 @@ namespace <%=myNamespace%>
 				}
 				
 %>		
-		<%=fieldType%> <%=DnpUtils.SetCamelCase(f.Name)%>;
+		<%=fieldType%> _<%=DnpUtils.SetCamelCase(f.Name)%>;
 		
 		[DataObjectField(<%=f.IsKey?"true":"false"%>, false, <%=f.IsNullable?"true":"false"%>)]
 		public <%=fieldType%> <%=fieldName%>
 		{
-			get { return this.<%=DnpUtils.SetCamelCase(f.Name)%>; }
+			get { return this._<%=DnpUtils.SetCamelCase(f.Name)%>; }
 			set
 			{
-				if (value != this.<%=DnpUtils.SetCamelCase(f.Name)%>)
+				if (value != this._<%=DnpUtils.SetCamelCase(f.Name)%>)
 				{
-					this.<%=DnpUtils.SetCamelCase(f.Name)%> = value;
+					this._<%=DnpUtils.SetCamelCase(f.Name)%> = value;
 					NotifyPropertyChanged("<%=fieldName%>");
 				}
 			}
