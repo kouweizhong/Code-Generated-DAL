@@ -371,7 +371,7 @@ namespace <%=myNamespace%>
 				// so I'm setting the script to leave out the return values for SPs that have result sets
 				if(param.Direction == ParamDirection.ReturnValue)
 				{
-					if(objProc.ResultColumns.Count <= 0)
+					if(objProc.ResultColumns.Count <= 0 && commandType != "Select")
 					{
 						if(ct==ClassType.ValueType && param.IsNullable==true)
 						{
@@ -467,8 +467,8 @@ namespace <%=myNamespace%>
 			}
 			
 			string selectObjParamList = paramList.ToString();
-			
-			if(objProc.ResultColumns.Count > 0)
+						
+			if(objProc.ResultColumns.Count > 0 || commandType == "Select")
 			{
 				if(isFirst==false)
 				{
@@ -582,7 +582,7 @@ namespace <%=myNamespace%>
 %>
 			//execute proc
 <%
-			if(objProc.ResultColumns.Count > 0)
+			if(objProc.ResultColumns.Count > 0 || commandType == "Select")
 			{
 				output.autoTabLn("Reader = cmd.ExecuteReader();");
 				
@@ -670,7 +670,7 @@ namespace <%=myNamespace%>
 						goto case ParamDirection.InputOutput;
 						break;
 					case ParamDirection.ReturnValue:
-						if(objProc.ResultColumns.Count <= 0)
+						if(objProc.ResultColumns.Count <= 0 && commandType != "Select")
 						{
 							if(param.IsNullable==true)
 							{
@@ -1088,29 +1088,31 @@ namespace <%=myNamespace%>
 												break;
 											case "commandType":
 												commandType = reader.Value;
-												break;
+												break;									
 										}
 									} while (reader.MoveToNextAttribute());
 									reader.MoveToElement();
 								}
-
-								rc = new DataEntity(DnpUtils.SetPascalCase(entityName));
-								switch(commandType)
-								{
-									case "Select":
-										rc.SelectCommands.Add(ProcedureName);
-										break;
-									case "Insert":
-										rc.InsertCommands.Add(ProcedureName);
-										break;
-									case "Update":
-										rc.UpdateCommands.Add(ProcedureName);
-										break;
-									case "Delete":
-										rc.DeleteCommands.Add(ProcedureName);
-										break;
-								}
 								
+								if(string.IsNullOrEmpty(entityName) == false)
+								{
+									rc = new DataEntity(DnpUtils.SetPascalCase(entityName));
+									switch(commandType)
+									{
+										case "Select":
+											rc.SelectCommands.Add(ProcedureName);
+											break;
+										case "Insert":
+											rc.InsertCommands.Add(ProcedureName);
+											break;
+										case "Update":
+											rc.UpdateCommands.Add(ProcedureName);
+											break;
+										case "Delete":
+											rc.DeleteCommands.Add(ProcedureName);
+											break;
+									}
+								}
 								CommandType = commandType;
 								
 								break;
