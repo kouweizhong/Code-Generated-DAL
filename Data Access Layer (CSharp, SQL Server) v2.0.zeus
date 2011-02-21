@@ -1,22 +1,27 @@
 ﻿##|TYPE Template
 ##|UNIQUEID dd05bd78-2a91-4f04-b1ea-7cfe919b4943
-##|TITLE Data Access Layer (C#, SQL Server) v2.4
+##|TITLE Data Access Layer (C#, SQL Server) v2.5
 ##|NAMESPACE ZacksFiasco.DataAccessLayer.SQLServer2005
 ##|SOURCE_TYPE Source
 ##|OUTPUT_LANGUAGE C#
 ##|COMMENTS_BEGIN
 changes:
+v2.5
+1. added option to declare data access class public, private, or internal
+2. fixed return and out paramters for commands that use a data reader.
+3. set all methods virtual
+v2.4
+1. added code to skip Table Functions
+
+v2.3
+1. added "_" to begining of all private variables to avoide many name collisions with c# keywords such as "event"
+
+v2.2
 1. added data objects
 2. added methods that return and accept data objects as parameters
 3. data objects are controled by custom <MetaData> 
 XML section added to stored procedures
 4. constructor now requires a Connection Name which is uses to retrieve the correct connection from the configuration
-
-v2.3
-1. added "_" to begining of all private variables to avoide many name collisions with c# keywords such as "event"
-
-v.2.4
-1. added code to skip Table Functions
 ##|COMMENTS_END
 ##|GUI_ENGINE Microsoft Script
 ##|GUI_LANGUAGE VBScript
@@ -67,6 +72,12 @@ Sub setup()
 		ui.AddLabel "lblClassName", "ClassName: ",  ""
 		ui.AddTextBox "txtClassName", "MyDataAccess", "ClassName for your Data Access object"
 
+		Set cmbClassVisibility = ui.AddComboBox("cmbClassVisibility", "Select visibility.")
+		cmbClassVisibility.Item("public") = "public"
+		cmbClassVisibility.Item("private") = "private"
+		cmbClassVisibility.Item("internal") = "internal"
+		cmbClassVisibility.SelectedValue = "public"
+		
 		' Attach the onchange event to the cmbDatabases control.
 		setupDatabaseDropdown cmbDatabases
 		'cmbDatabases.AttachEvent "onchange", "cmbDatabases_onchange"
@@ -181,6 +192,13 @@ public class GeneratedTemplate : DotNetScriptTemplate
 		string myClass = (string)input["txtClassName"];
 		string mySchema = (string)input["txtSchema"];
 		string filename = string.Format("{0}\\{1}.cs",(string)input["txtPath"],myClass);
+		string classVis = (string)input["cmbClassVisibility"];
+		StringBuilder sbReturnClasses = new StringBuilder();
+		
+		if(string.IsNullOrEmpty(classVis))
+		{
+			classVis = "public";
+		}
 		
 		//Set the Language for our column data types
 		//MyMeta.Language = "C#";
@@ -205,6 +223,7 @@ public class GeneratedTemplate : DotNetScriptTemplate
 		Trace("myNamespace = " + myNamespace);
 		Trace("myClass = " + myClass);
 		Trace("mySchema = " + mySchema);
+		Trace("classVis = " + classVis);
 		
 		//System.Diagnostics.Debugger.Launch();
 		//System.Diagnostics.Debugger.Break();		
@@ -219,7 +238,7 @@ using System.Text;
 namespace <%=myNamespace%>
 {
 	[DataObjectAttribute]
-    public partial class <%=myClass%>: IDisposable
+    <%=classVis%> partial class <%=myClass%>: IDisposable
     {
 		public <%=myClass%>(string ConnectionName)
 		{
@@ -233,14 +252,14 @@ namespace <%=myNamespace%>
 		
 		string connectionName;
 		
-		public string ConnectionName
+		public virtual string ConnectionName
 		{
 			get { return connectionName; }
 		}
 	
         SqlConnection con = null;
 
-        SqlConnection Connection
+        protected SqlConnection Connection
         {
             get
             {
@@ -254,7 +273,7 @@ namespace <%=myNamespace%>
             }
         }
 
-        public void Close()
+        public virtual void Close()
         {
             if(con != null)
             {
@@ -264,9 +283,9 @@ namespace <%=myNamespace%>
             }
         }
 
-        SqlTransaction transaction = null;
+        protected SqlTransaction transaction = null;
 
-        public void BeginTransaction()
+        public virtual void BeginTransaction()
         {
 			if(transaction == null)
 			{
@@ -274,7 +293,7 @@ namespace <%=myNamespace%>
 			}
         }
 
-        public void Rollback()
+        public virtual void Rollback()
         {
             try
             {
@@ -290,7 +309,7 @@ namespace <%=myNamespace%>
             }
         }
 
-        public void Commit()
+        public virtual void Commit()
         {
             transaction.Commit();
             transaction = null;
@@ -300,6 +319,8 @@ namespace <%=myNamespace%>
 		// Loop through the procs the user selected and generate the C# methods to call the procedures
 		
 		Dictionary<string, DataEntity> entities = new Dictionary<string, DataEntity>();
+		Dictionary<string, ReturnClass> returnClasses = new Dictionary<string, ReturnClass>();
+
 		Trace("begining procedure loop.");
 		foreach(IProcedure objProc in database.Procedures)
 		{
@@ -361,14 +382,28 @@ namespace <%=myNamespace%>
 			ClassType ct;
 			string returnValue="void";
 			IParameter returnParam=null;
+			string returnOutValue = null;
+
+			// I don't think checking the commandType is necessary
+			bool useReturnClass = false;
+			if(objProc.ResultColumns.Count > 0 || commandType == "Select")
+			{
+				useReturnClass = true;
+				returnValue = subName + "Return";
+			}
 			
 			foreach(IParameter param in objProc.Parameters)
 			{
 				ct = TestType(param.LanguageType);
 				string paramName = DnpUtils.SetPascalCase(param.Name.Replace(specialChar,""));
-				
-				// I can't seem to be able to read the return value after calling ExecuteReader()
-				// so I'm setting the script to leave out the return values for SPs that have result sets
+								
+				// return values and out params cannot be read while the reader is open.
+				// you must close the reader first.
+				// http://msdn.microsoft.com/en-us/library/haa3afyz(v=vs.71).aspx
+				// this makes it harder to handle these types of params since I don't expose the command object, 
+				// so I am going to return a special object that can be used to read the return and out 
+				// params after closing the reader
+								
 				if(param.Direction == ParamDirection.ReturnValue)
 				{
 					if(objProc.ResultColumns.Count <= 0 && commandType != "Select")
@@ -383,6 +418,25 @@ namespace <%=myNamespace%>
 						}
 						returnParam = param;
 					}
+					else
+					{
+						//if(ct==ClassType.ValueType && param.IsNullable==true)
+						if(ct==ClassType.ValueType)
+						{
+							returnOutValue = string.Format("{0}?", param.LanguageType);
+						}
+						else
+						{
+							returnOutValue = param.LanguageType;
+						}
+						returnParam = param;
+						
+						paramCallListRefSet.AppendFormat("{0} = outParams.{0};", paramName);
+						paramCallListRefSet.AppendLine();
+						Trace("returnOutValue: " + returnOutValue);
+
+					}
+					
 				}
 				else
 				{				
@@ -407,24 +461,31 @@ namespace <%=myNamespace%>
 						case ParamDirection.InputOutput:
 							paramList.Append("ref ");
 							paramCallList.Append("ref ");
-							
-							if(ct==ClassType.ValueType && param.IsNullable==true)
-							{
-								paramCallListRef.AppendFormat("{0}? {1} = Obj.{1};",
-									param.LanguageType, paramName);
-								paramCallListRefSet.AppendFormat("Obj.{0} = {0};",
-									paramName);
+
+							if(objProc.ResultColumns.Count <= 0 && commandType != "Select")
+							{								
+								if(ct==ClassType.ValueType && param.IsNullable==true)
+								{
+									paramCallListRef.AppendFormat("{0}? {1} = Obj.{1};",
+										param.LanguageType, paramName);
+									paramCallListRefSet.AppendFormat("Obj.{0} = {0};",
+										paramName);
+								}
+								else
+								{
+									paramCallListRef.AppendFormat("{0} {1} = Obj.{1};",
+										param.LanguageType, paramName);
+									paramCallListRefSet.AppendFormat("Obj.{0} = {0};",
+										paramName);
+								}
+								paramCallListRef.AppendLine();
+								paramCallListRefSet.AppendLine();
 							}
 							else
 							{
-								paramCallListRef.AppendFormat("{0} {1} = Obj.{1};",
-									param.LanguageType, paramName);
-								paramCallListRefSet.AppendFormat("Obj.{0} = {0};",
-									paramName);
-							}
-							
-							paramCallListRef.AppendLine();
-							paramCallListRefSet.AppendLine();
+								paramCallListRefSet.AppendFormat("{0} = outParams.{0};", paramName);
+								paramCallListRefSet.AppendLine();
+							}							
 							
 							//////
 							if(entity != null)
@@ -482,15 +543,15 @@ namespace <%=myNamespace%>
 			
 			disposeList.Add(string.Format("cmd{0}",subName));
 			
-%>		SqlCommand cmd<%=subName%>=null;
+%>		protected SqlCommand cmd<%=subName%>=null;
 		partial void on<%=subName%>CommandCreated(SqlCommand cmd);
 
-		public <%=returnValue%> <%=subName%>(<%=paramList.ToString()%>)
+		public virtual <%=returnValue%> <%=subName%>(<%=paramList.ToString()%>)
 		{
 			SqlCommand cmd = null;
 <%			output.tabLevel = 3;
 
-			if(returnParam != null)
+			if(returnParam != null || useReturnClass)
 			{
 				output.autoTabLn(string.Format("{0} rc;", returnValue));
 			}
@@ -637,17 +698,24 @@ namespace <%=myNamespace%>
 %>
 			//retrieve any output parameters
 <%
-			foreach(IParameter param in objProc.Parameters)
+			if(useReturnClass)
 			{
-				string csparamName = DnpUtils.SetPascalCase(param.Name.Replace(specialChar,string.Empty));
-				
-				switch(param.Direction)
+%>			rc = new <%=returnValue%>(cmd);
+<%
+			}
+			else
+			{
+				foreach(IParameter param in objProc.Parameters)
 				{
-					case ParamDirection.Input:
-						break;
-					case ParamDirection.InputOutput:
-						if(param.IsNullable==true)
-						{
+					string csparamName = DnpUtils.SetPascalCase(param.Name.Replace(specialChar,string.Empty));
+					
+					switch(param.Direction)
+					{
+						case ParamDirection.Input:
+							break;
+						case ParamDirection.InputOutput:
+							if(param.IsNullable==true)
+							{
 %>			if(cmd.Parameters["<%=param.Name%>"].Value == DBNull.Value)
 			{
 				<%=csparamName%> = null;
@@ -658,22 +726,22 @@ namespace <%=myNamespace%>
 			}
 
 <%
-						}
-						else
-						{
+							}
+							else
+							{
 %>			<%=csparamName%> = (<%=param.LanguageType%>)cmd.Parameters["<%=param.Name%>"].Value;
 
 <%
-						}
-						break;
-					case ParamDirection.Output:
-						goto case ParamDirection.InputOutput;
-						break;
-					case ParamDirection.ReturnValue:
-						if(objProc.ResultColumns.Count <= 0 && commandType != "Select")
-						{
-							if(param.IsNullable==true)
+							}
+							break;
+						case ParamDirection.Output:
+							goto case ParamDirection.InputOutput;
+							break;
+						case ParamDirection.ReturnValue:
+							if(objProc.ResultColumns.Count <= 0 && commandType != "Select")
 							{
+								if(param.IsNullable==true)
+								{
 %>			if(cmd.Parameters["<%=param.Name%>"].Value == DBNull.Value)
 			{
 				rc = null;
@@ -690,24 +758,94 @@ namespace <%=myNamespace%>
 %>			rc = (<%=param.LanguageType%>)cmd.Parameters["<%=param.Name%>"].Value;
 
 <%
+								}
 							}
-						}
-						break;
-					default:
-						Trace("unknown parameter direction");
-						break;
+							break;
+						default:
+							Trace("unknown parameter direction");
+							break;
+					}
 				}
 			}
 %>
-
 <%
-			if(returnParam != null)
+			if(returnParam != null || useReturnClass)
 			{
 				output.autoTabLn("return rc;");
 			}
 %>		} // end procedure method
+<%
+			if(useReturnClass)
+			{
+				sbReturnClasses.AppendFormat("\tpublic class {0}", returnValue);
+				sbReturnClasses.AppendLine();
+				sbReturnClasses.AppendLine("\t{");
+				sbReturnClasses.AppendFormat("\t\tprivate {0}() {{ }}", returnValue);
+				sbReturnClasses.AppendLine();
+				sbReturnClasses.AppendFormat("\t\tpublic {0}(SqlCommand Cmd) {{ _cmd = Cmd; }}", returnValue);
+				sbReturnClasses.AppendLine();
+				sbReturnClasses.AppendLine("\t\tSqlCommand _cmd;");
+				sbReturnClasses.AppendLine("\t\t// return/out properties");
+				
+				// create return class				
+				foreach(IParameter param in objProc.Parameters)
+				{
+					string csparamName = DnpUtils.SetPascalCase(param.Name.Replace(specialChar,string.Empty));
+					string returnClassParamType;
 
-<%// add the Select(), Insert(), Update(), or Delete() overload here
+					if(TestType(param.LanguageType)==ClassType.ValueType)
+					{
+						//output.append(string.Format("//x param.Name: {0} param.LanguageType: {1} TestType(param.LanguageType): {2} param.IsNullable: {3}", 
+						//	param.Name, param.LanguageType, TestType(param.LanguageType), param.IsNullable));
+							
+						// make all value types nullable
+						returnClassParamType = string.Format("{0}?", param.LanguageType);
+					}
+					else
+					{
+						//output.append(string.Format("// param.Name: {0} param.LanguageType: {1} TestType(param.LanguageType): {2} param.IsNullable: {3}", 
+						//	param.Name, param.LanguageType, TestType(param.LanguageType), param.IsNullable));
+						returnClassParamType = param.LanguageType;
+					}
+
+					switch(param.Direction)
+					{
+						case ParamDirection.Input:
+							break;
+						case ParamDirection.InputOutput:
+							sbReturnClasses.AppendFormat("\t\tpublic {0} {1}", returnClassParamType, csparamName);
+							sbReturnClasses.AppendLine();
+							sbReturnClasses.AppendLine("\t\t{");
+							sbReturnClasses.AppendLine("\t\t\tget");
+							sbReturnClasses.AppendLine("\t\t\t{");
+							sbReturnClasses.AppendFormat("\t\t\t\t{0} rc = null;", returnClassParamType);
+							sbReturnClasses.AppendLine();
+							sbReturnClasses.AppendFormat("\t\t\t\tif(_cmd.Parameters[\"{0}\"].Value != DBNull.Value)", param.Name);
+							sbReturnClasses.AppendLine();
+							sbReturnClasses.AppendLine("\t\t\t\t{");
+							sbReturnClasses.AppendFormat("\t\t\t\t\trc = ({0})_cmd.Parameters[\"{1}\"].Value;", param.LanguageType, param.Name);
+							sbReturnClasses.AppendLine();
+							sbReturnClasses.AppendLine("\t\t\t\t}");
+							sbReturnClasses.AppendLine("\t\t\t\treturn rc;");
+							sbReturnClasses.AppendLine("\t\t\t}");
+							sbReturnClasses.AppendLine("\t\t}");
+							break;
+						case ParamDirection.Output:
+							goto case ParamDirection.InputOutput;
+							break;
+						case ParamDirection.ReturnValue:
+							goto case ParamDirection.InputOutput;
+							break;
+						default:
+							Trace("unknown parameter direction");
+							break;
+					}
+				}
+				sbReturnClasses.AppendLine("\t}");
+				sbReturnClasses.AppendLine();					
+			}
+			
+			// add the Select(), Insert(), Update(), or Delete() overload here
 			if(entity != null)
 			{
 				string entityName;
@@ -737,35 +875,70 @@ namespace <%=myNamespace%>
 					else
 					{
 						commandName = subName + "Obj";
-					}				
-%>
-		public <%=entityName%> <%=commandName%>(<%=selectObjParamList%>)
+					}
+					
+					if(returnParam != null)
+					{
+						
+						if(string.IsNullOrEmpty(selectObjParamList))
+						{
+%>		public virtual <%=entityName%> <%=commandName%>(out <%=returnOutValue%> ReturnValue)
 <%
+						}
+						else
+						{
+%>		public virtual <%=entityName%> <%=commandName%>(<%=selectObjParamList%>, out <%=returnOutValue%> ReturnValue)
+<%
+						}
+					}
+					else
+					{
+%>		public virtual <%=entityName%> <%=commandName%>(<%=selectObjParamList%>)
+<%
+					}
 				}
 				else
 				{
 					entityName = entity.Name;
 					commandName = subName.Replace(commandType, string.Empty).Replace(entity.Name, string.Empty);
 					commandName = commandType + commandName;
-%>
-		public <%=returnValue%> <%=commandName%>(<%=entityName%> Obj)
+
+%>		public virtual <%=returnValue%> <%=commandName%>(<%=entityName%> Obj)
 <%				}
 %>		{
-			<%
-				output.autoTabLn(paramCallListRef.ToString());
+<%
+				if(paramCallListRef.Length > 0)
+				{
+					output.autoTabLn(paramCallListRef.ToString());
+				}
 				
 				if(objProc.ResultColumns.Count > 0)
 				{
 					output.autoTabLn("IDataReader Reader = null;");
-				}
-				
-				if(returnParam != null && commandType != "Select") 
+					if(useReturnClass)
+					{
+						output.autoTab(string.Format("{0} outParams = {1}({2});", 
+							returnValue, subName, paramCallList.ToString()));
+					}
+					else
+					{
+						output.autoTab(string.Format("{0}({1});", subName, paramCallList.ToString()));
+					}
+				}				
+				else if(!useReturnClass)
 				{
-					output.autoTab(string.Format("{0} rc = ", returnValue));
+					output.autoTab(string.Format("{0} rc = {1}({2});", 
+						returnValue, subName, paramCallList.ToString()));
 				}
-				output.autoTab(string.Format("{0}({1});", subName, paramCallList.ToString()));
+				else
+				{
+					if(returnParam != null)
+					{
+						output.autoTab(string.Format("{0} rc;", returnValue));
+					}
+					output.autoTab(string.Format("{0}({1});", subName, paramCallList.ToString()));
+				}
 				output.autoTabLn(string.Empty);
-				output.autoTabLn(paramCallListRefSet.ToString());
 				
 				if(commandType == "Select")
 				{
@@ -792,21 +965,22 @@ namespace <%=myNamespace%>
 					output.decTab();
 					output.autoTabLn("}");
 					
+					output.autoTabLn(paramCallListRefSet.ToString());
 					output.autoTabLn("return rc;");
 				}
 				else if(returnParam != null)
 				{
+					output.autoTabLn(paramCallListRefSet.ToString());
 					output.autoTabLn("return rc;");
 				}
 %>		}
-
 <%
 			}// end if(entity != null)
 		}// end foreach(IProcedure objProc in database.Procedures)
 %>
 		#region IDisposable Members
-
-        public void Dispose()
+		
+        public virtual void Dispose()
         {
             //dispose of each cmd object and call close
 <%
@@ -827,9 +1001,7 @@ namespace <%=myNamespace%>
         }
 
         #endregion
-
-	}
-<%
+	}<%
 		foreach(KeyValuePair<string, DataEntity> kve in entities)
 		{
 			DataEntity e = kve.Value;
@@ -837,6 +1009,7 @@ namespace <%=myNamespace%>
 			string entityName = DnpUtils.SetPascalCase(e.Name);
 			
 %>
+
 	public partial class <%=entityName%>: INotifyPropertyChanged
 	{
 		public <%=entityName%>()
@@ -902,10 +1075,12 @@ namespace <%=myNamespace%>
 		}
 <%
 			}// end foreach(Field)
-%>	}
-<%
+%>	}<%
 		}// end foreach(Entity)
-%>
+		
+		// write out return objects
+		// for some reason it I do output.append() it errors
+%><%=sbReturnClasses.ToString()%>
 }//end namespace
 <%
 		
@@ -980,7 +1155,7 @@ namespace <%=myNamespace%>
 		return rc;
 	}
 	
-		// strings, binary arrays
+	// strings, binary arrays
 	public bool IsBinaryType(string TypeName)
 	{
 		bool rc = false;
@@ -1049,8 +1224,7 @@ namespace <%=myNamespace%>
 		Trace("GenerateEntityName(\""+objProc.Name+"\") => " + rc);
 		
 		return rc;
-	}
-	
+	}	
 	
 	DataEntity ParseXml(string XmlFragment, string ProcedureName, out string CommandType)
 	{
@@ -1260,6 +1434,33 @@ public class DataEntity
 	}
 }
 
+public class ReturnClass
+{
+	public ReturnClass(string Name)
+	{
+		name = Name + "Return";
+	}
+
+	ReturnClass()
+	{
+	}
+
+	string name;
+
+	public string Name
+	{
+		get { return name; }
+		//set { name = value; }
+	}
+
+	Dictionary<string, Field> fields = new Dictionary<string, Field>();
+
+	public Dictionary<string, Field> Fields
+	{
+		get { return fields; }
+	}
+}
+
 public class Field
 {
 	public Field(string Name)
@@ -1319,8 +1520,5 @@ public class Field
 		set { classType = value; }
 	}
 }
-
-
-
 %>
 ##|BODY_END
